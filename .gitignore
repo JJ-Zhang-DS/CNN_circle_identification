@@ -1,0 +1,9 @@
+# Ignore all files in the data directory
+data/*
+
+# Ignore check_data.ipynb
+check_data.ipynb
+
+# Ignore env file
+.env
+
