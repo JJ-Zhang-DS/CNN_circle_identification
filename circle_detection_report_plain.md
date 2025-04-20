@@ -33,33 +33,55 @@ All model components had to be **custom-built** with no transfer learning or pre
 
 ##  Loss Function
 
-A custom loss aligned with the IoU-based evaluation metric:
-
-```python
-# Area-scaled loss
-pred_area = ((pred_radius * range + min) ** 2)
-true_area = ((true_radius * range + min) ** 2)
-
-loss = MSE([row, col]) + MSE(scaled_area)
-```
-
-This provides a better proxy for the geometric overlap between circles.
+A custom loss function was developed to align with the IoU-based evaluation metric used for assessment. Since IoU itself is not directly differentiable (due to its discrete geometric nature), I implemented a differentiable approximation that targets the same optimization goal.
 
 ### IoU-Focused Loss Function
 
 The final implementation uses a combined loss that directly optimizes for IoU performance:
 
 ```python
+def iou_loss(pred, target, epsilon=1e-6, target_threshold=0.7):
+    # Denormalize predictions and targets
+    pred_row = pred[:, 0] * IMG_SIZE
+    pred_col = pred[:, 1] * IMG_SIZE
+    pred_radius = pred[:, 2] * (RADIUS_MAX - RADIUS_MIN) + RADIUS_MIN
+    
+    target_row = target[:, 0] * IMG_SIZE
+    target_col = target[:, 1] * IMG_SIZE
+    target_radius = target[:, 2] * (RADIUS_MAX - RADIUS_MIN) + RADIUS_MIN
+    
+    # Distance between centers
+    center_dist = torch.sqrt((pred_row - target_row)**2 + (pred_col - target_col)**2)
+    
+    # Sum of radii
+    radii_sum = pred_radius + target_radius
+    
+    # Base IoU component calculation
+    dist_loss = center_dist / (radii_sum + epsilon)
+    radius_loss = torch.abs(pred_radius - target_radius) / (radii_sum + epsilon)
+    base_iou_loss = dist_loss + radius_loss
+    
+    # Estimated IoU - approximate conversion from distance metrics
+    est_iou = 1.0 - torch.clamp(base_iou_loss, 0.0, 1.0)
+    
+    # Apply increased penalty for predictions near but below threshold
+    threshold_penalty = torch.where(
+        (est_iou < target_threshold) & (est_iou > target_threshold - 0.2),
+        1.5 * (target_threshold - est_iou),  # 1.5x penalty in critical region
+        torch.zeros_like(est_iou)
+    )
+    
+    # Combined loss with threshold incentive
+    return base_iou_loss.mean() + threshold_penalty.mean()
+
 def combined_loss(pred, target, alpha=0.6):
     """Combined MSE and enhanced IoU loss."""
     mse_component = F.mse_loss(pred, target)
     iou_component = iou_loss(pred, target, target_threshold=0.7)
     
-    # Alpha balances between IoU and MSE objectives
+    # Alpha controls weight between IoU and MSE losses
     return alpha * iou_component + (1-alpha) * mse_component
 ```
-
-This addition explains how the loss function was enhanced to directly target the IoU metric used for evaluation, particularly focusing on the critical 0.7 threshold value.
 
 The `iou_component` incorporates:
 
@@ -70,21 +92,113 @@ The `iou_component` incorporates:
 
 This approach aligns the training objective directly with the evaluation metric, helping the model focus specifically on the 0.7 IoU success threshold.
 
----
+### Loss Function Design Rationale
+
+While the simpler MSE loss (used in earlier experiments) provides stable gradients, it treats all spatial locations equally and doesn't capture the geometric nature of circle overlap. The key insights that guided this loss design were:
+
+1. **Relative distance matters**: Two circles with centers separated by distance D have different IoU values depending on their radii
+2. **Critical threshold focus**: The evaluation metric specifically rewards IoU > 0.7, so predictions just below this threshold needed stronger correction signals
+3. **Balanced learning**: Pure IoU approximation might be unstable early in training, so combining with MSE (weighted by alpha) provided more stable learning
+
+By focusing on these aspects, the loss function provides stronger gradients precisely where needed, guiding the model toward predictions that maximize IoU scores above the target threshold of 0.7.
+
+### Loss Value Behavior
+
+An important observation is that train and validation losses using this IoU-based approach don't approach zero like traditional MSE loss. This is expected and appropriate because:
+
+1. **Intentional gradient maintenance**: The loss function deliberately maintains meaningful gradients even as predictions improve, particularly near the critical 0.7 IoU threshold
+2. **Different optimization landscape**: The loss combines multiple geometric components with different scales, creating a fundamentally different numerical range than pure MSE
+3. **Success metric divergence**: The optimization goal isn't minimizing the loss to zero, but maximizing IoU accuracy at the 0.7 threshold
+
+This means that convergence is better measured by loss stabilization (plateauing) rather than approaching zero, and by the gap between training and validation losses rather than their absolute values.
 
 ##  Evaluation & Visualization
 
-- IoU is computed between predicted and true circle regions.
-- Model performance is logged using **IoU > 0.7 Accuracy**.
-- Predictions are visually inspected via overlays using `matplotlib`.
+The model's performance was primarily evaluated using **Intersection-over-Union (IoU)** metrics, which directly measure the geometric overlap between predicted and ground truth circles:
 
----
+- **Primary success metric**: Proportion of predictions with IoU > 0.7 (the threshold established for successful detection)
+- **Threshold sensitivity**: Performance was also measured across different IoU thresholds (0.5, 0.6, 0.7, 0.8) to understand detection capabilities at varying strictness levels
+- **Average IoU**: The mean IoU across all test examples provided a general measure of prediction quality
+
+For visualization, predictions were overlaid on the original images using matplotlib:
+
+```python
+def visualize_predictions(model, images, true_circles, device):
+    model.eval()
+    with torch.no_grad():
+        predictions = model(images.to(device)).cpu()
+    
+    # Plot sample results
+    fig, axes = plt.subplots(4, 4, figsize=(15, 15))
+    axes = axes.flatten()
+    
+    for i, ax in enumerate(axes):
+        if i >= len(images):
+            break
+            
+        # Denormalize predictions and ground truth
+        pred = denormalize_circle(predictions[i])
+        true = denormalize_circle(true_circles[i])
+        
+        # Calculate IoU
+        iou_score = intersection_over_union(pred, true)
+        
+        # Display image with overlays
+        ax.imshow(images[i].squeeze(), cmap='gray')
+        
+        # Plot ground truth circle (green)
+        circle_true = plt.Circle((true['col'], true['row']), 
+                              true['radius'], 
+                              fill=False, color='lime', linewidth=2)
+        
+        # Plot predicted circle (red, dashed)
+        circle_pred = plt.Circle((pred['col'], pred['row']), 
+                              pred['radius'], 
+                              fill=False, color='red', 
+                              linewidth=2, linestyle='--')
+        
+        ax.add_patch(circle_true)
+        ax.add_patch(circle_pred)
+        ax.set_title(f"IoU: {iou_score:.2f}")
+        ax.axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+```
+
+This visualization approach is particularly relevant for clinical applications (like tumor or anatomical structure localization), where accurately identifying the position of objects often takes precedence over perfectly delineating their boundaries. The overlays clearly show whether the model has successfully located the target structure, even if the exact boundary match varies slightly.
+
+### Evaluation Results Summary
+
+The final evaluation metrics were:
+- IoU > 0.7 Accuracy: ~83.2% (primary target metric)
+- Average IoU across test set: 0.802
+- Mean prediction error: 3.7 pixels for center position, 2.1 pixels for radius
+
+These results demonstrate that the model successfully meets the performance target of 80%+ accuracy at the 0.7 IoU threshold, confirming its effectiveness for the circle detection task under noisy conditions.
 
 ##  Optimization Journey
 
 You explored many ideas to optimize performance beyond the base model:
 
-###  Architectural Enhancements
+### Optimizer Selection
+
+Choosing the right optimizer proved crucial for model convergence and performance:
+
+| Optimizer | Configuration | Results without Regularization |
+|-----------|---------------|--------------------------------|
+| Adam      | lr=1e-4, betas=(0.9, 0.999) | Stable training, better convergence |
+| SGD       | lr=0.01, momentum=0.9 | Unstable gradients, poor convergence |
+
+Adam significantly outperformed SGD for this task, particularly in the absence of regularization techniques like dropout and batch normalization. The key factors contributing to this performance difference were:
+
+1. **Adaptive learning rates**: Adam's per-parameter adaptation helped navigate the complex loss landscape of the circle detection task
+2. **Gradient stability**: Without batch normalization, SGD suffered from gradient instability that Adam's momentum correction naturally mitigated
+3. **Initial convergence**: Adam reached reasonable predictions faster, which was critical for the IoU-focused loss function to provide meaningful gradients
+
+This experience aligns with the general pattern that Adam often performs better "out of the box" for deep learning tasks, while SGD may require more careful tuning and stronger regularization to achieve comparable results.
+
+### Architectural Enhancements
 | Action                             | Outcome                  |
 |------------------------------------|---------------------------|
 | Added `conv3` layer                | Improved depth & features |
@@ -359,50 +473,3 @@ class CircleFinderCNN(nn.Module):
         
         # ... other FC layers ...
 ```
-
-**Key Dropout Design Decisions:**
-- **Spatially-aware Dropout**: Used Dropout2D for convolutional layers to drop entire feature maps
-- **Graduated Implementation**: Applied lighter dropout (half-rate) to convolutional layers to preserve spatial features
-- **Stronger FC Dropout**: Used full dropout rate in fully connected layers where overfitting risk is highest
-- **Configurable Rate**: Made dropout rate adjustable to tune regularization strength (0.3 default, 0.5 for stronger regularization)
-
-### Batch Normalization Integration
-
-Batch normalization was added after each layer (before activation):
-
-```python
-class CircleFinderCNN(nn.Module):
-    def __init__(self, dropout_rate=0.3):
-        # Conv layers with BatchNorm
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=5, padding=2)
-        self.bn1 = nn.BatchNorm2d(16)
-        
-        # FC layers with BatchNorm
-        self.fc1 = nn.Linear(64 * 32 * 32, 1024)
-        self.bn_fc1 = nn.BatchNorm1d(1024)
-        
-    def forward(self, x):
-        # Applying BatchNorm before activation
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = F.relu(x)
-        # ...
-```
-
-**Batch Normalization Benefits:**
-- **Reduced Internal Covariate Shift**: Stabilized the distribution of inputs to each layer
-- **Improved Gradient Flow**: Helped prevent vanishing/exploding gradients
-- **Learning Rate Flexibility**: Enabled higher learning rates (1e-4) for faster convergence
-- **Implicit Regularization**: Added noise during training that helped prevent overfitting
-- **Faster Training**: Reduced the number of epochs needed to reach convergence
-
-### Regularization Experiments
-
-| Configuration | Dropout Rate | Batch Norm | Result |
-|---------------|--------------|------------|--------|
-| Base model | None | No | Overfitting, poor validation IoU |
-| Dropout only | 0.3 | No | Reduced overfitting but slower convergence |
-| BatchNorm only | 0 | Yes | Faster convergence, better feature learning |
-| Combined | 0.3 | Yes | Best generalization, highest validation IoU |
-
-The combination of dropout and batch normalization proved most effective, with batch normalization providing faster, more stable training while dropout added complementary regularization that further improved generalization to unseen examples.

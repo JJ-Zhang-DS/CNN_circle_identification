@@ -129,28 +129,26 @@ class CircleFinderCNN(nn.Module):
         return x
 
 # --------- Training Loop ---------
-def train_model(model, train_loader, val_loader, device, epochs=200, lr=1e-3, patience=20):
-    # Use SGD with momentum
-    optimizer = torch.optim.SGD(
+def train_model(model, train_loader, val_loader, device, epochs=200, lr=1e-4, patience=20):
+    # MUCH LOWER learning rate for circle kernels model
+    optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=lr,                # Start with moderate learning rate
-        momentum=0.9,         # Important for smoothing and escaping local minima
-        weight_decay=1e-4,    # Slightly stronger weight decay than Adam
-        nesterov=True         # Use Nesterov momentum for better performance
+        lr=1e-4,  # Changed from 1e-2 to 1e-4
+        weight_decay=1e-5
     )
     
-    # More aggressive LR scheduling for SGD
+    # Add gradient clipping to prevent explosion
+    max_grad_norm = 1.0  # Maximum gradient norm
+    
+    # Learning rate scheduler for Adam
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, 
         mode='min',
-        factor=0.1,           # Reduce by factor of 10
-        patience=15,          # Wait longer before reducing
+        factor=0.2,
+        patience=10,
         verbose=True,
         min_lr=1e-6
     )
-    
-    # Gradient clipping is still beneficial
-    max_grad_norm = 1.0
     
     def loss_function(pred, target):
         return combined_loss(pred, target, alpha=0.6)
@@ -176,14 +174,7 @@ def train_model(model, train_loader, val_loader, device, epochs=200, lr=1e-3, pa
     epochs_list = []
     lr_history = []
 
-    # Add warmup to the beginning of the training loop
-    warmup_epochs = 5
     for epoch in range(epochs):
-        # Learning rate warmup
-        if epoch < warmup_epochs:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr * (epoch + 1) / warmup_epochs
-
         model.train()
         train_loss = 0
         for imgs, targets in train_loader:
@@ -437,7 +428,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = CircleFinderCNN()
-    train_model(model, train_loader, val_loader, device, epochs=100, patience=15, lr=1e-3)
+    train_model(model, train_loader, val_loader, device, epochs=150, patience=25, lr=1e-4)
     evaluate_model(model, val_loader, device)
     show_predictions(model, val_dataset, device, num_samples=5)
 
