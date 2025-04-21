@@ -10,9 +10,9 @@ All model components had to be **custom-built** with no transfer learning or pre
 
 The following files are included in this submission:
 
-- `circle_detection.ipynb`: Jupyter notebook containing the complete model implementation, training code, and evaluation
-- `circle_finder_model_JJ_Zhang.pkl.pkl`: Saved weights of the best performing model
-- `summary_JJ.pdf`: Brief summary of model architecture and key results
+- `circle_finder_cnn_JJ.ipynb`: Jupyter notebook containing the complete model implementation, training code, and evaluation
+- `circle_finder_model_JJ_Zhang.pkl`: Saved weights of the best performing model
+- `report_JJ.pdf`: Brief summary of model architecture and key results
 
 
 ---
@@ -84,7 +84,7 @@ This approach directly optimizes for the evaluation metric while maintaining sta
 
 | Component | Final Configuration | Impact |
 |-----------|---------------------|--------|
-| Optimizer | Adam (lr=1e-4, betas=(0.9, 0.999)) | Stable convergence |
+| Optimizer | Adam (lr=1e-4) | Stable convergence |
 | LR Schedule | ReduceLROnPlateau (factor=0.2, patience=20) | Adapts to performance plateaus |
 | Batch Size | 256 | Leverages A100 GPU capacity |
 | Early Stopping | patience=20 | Prevents overfitting |
@@ -101,7 +101,7 @@ The model's performance was primarily evaluated using **Intersection-over-Union 
 - **Threshold sensitivity**: Performance was also measured across different IoU thresholds (0.5, 0.6, 0.7, 0.8) to understand detection capabilities at varying strictness levels
 - **Average IoU**: The mean IoU across all test examples provided a general measure of prediction quality
 
-This visualization approach is particularly relevant for clinical applications (like tumor or anatomical structure localization), where accurately identifying the position of objects often takes precedence over perfectly delineating their boundaries. The overlays clearly show whether the model has successfully located the target structure, even if the exact boundary match varies slightly.
+I think this visualization approach is particularly relevant for clinical applications (like tumor or anatomical structure localization), where accurately identifying the position of objects often takes precedence over perfectly delineating their boundaries. The overlays clearly show whether the model has successfully located the target structure, even if the exact boundary match varies slightly.
 
 Here are some visualizations of the model's predictions vs the ground truth:
 The red circle is the predicted circle, and the green circle is the ground truth.
@@ -143,21 +143,12 @@ The base CNN architecture was selected as the final model following the principl
 ---
 
 
-
-
-
-### Evaluation Results Summary
-
-As mentioned above, different IoU thresholds were used to evaluate the model's performance. Here are the results:
-
-
-
 ---
 
-## 🧭 Lessons & Future Improvements
+## Lessons & Future Improvements
 
 Key insights gained:
-- Even simplified CNNs can effectively learn geometric structure
+- Even simplified CNNs can effectively learn geometric structure (much simpler CNN before optimization actually performed pretty well)
 - Loss function design is critical for geometric tasks
 - Global average pooling effectively reduces parameters while preserving performance
 - Custom geometric kernels (like circle kernels) show potential but require careful implementation
@@ -171,6 +162,5 @@ Potential improvements:
 - Fine-tuning the alpha weighting parameter in the combined loss function
 - Further exploration of specialized convolution kernels for circle detection
 - Implementing modest rotations and translations as data augmentation
-- Trying residual blocks to improve gradient flow in deeper networks
 
 This project demonstrated that careful model design and loss function engineering are more important than raw network complexity for geometric detection tasks. While standard CNNs performed well in this task, specialized geometric kernels remain a promising direction for future research.
