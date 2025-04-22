@@ -6,6 +6,9 @@ The goal of this challenge was to build a **CNN from scratch** to predict the **
 
 All model components had to be **custom-built** with no transfer learning or pretrained backbones.
 
+A final version of 'Best' models is here, https://github.com/JJ-Zhang-DS/CNN_circle_identification/blob/main/circle_finder_cnn_4.ipynb
+
+
 ##  Project Files
 
 The following files are included in this submission:
